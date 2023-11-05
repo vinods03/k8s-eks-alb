@@ -1,0 +1,342 @@
+# Install app locally on an EC2 instance
+
+Copied app related files for car price app from
+C:\Vinod\AWSSagemaker\Deployment\1. docker
+to
+C:\Vinod\AWSSagemaker\Deployment\5. EKS_again\NEW - What was not there in 3 EKS\9-kube-manifests-with-updated-docker-images\app-related\car_price
+
+Changed handler.py app.route for health check
+
+No exception block for health check in the car price app because there is no DB connectivity here
+
+Uploaded the files into S3 s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images/car_price/
+
+Provision an Amazon Linux EC2 instance.
+
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images/car_price/ . --recursive
+
+sudo yum -y update
+
+sudo yum install -y python3-pip
+
+sudo pip3 install scikit-learn==0.24.0
+
+sudo pip3 install flask
+
+sudo pip3 install boto3
+
+python3 handler_car_price.py
+
+Note:
+
+To find running apps: ps -ef grep py
+
+To kill app: pkill -9 -f "python3 handler_car_price.py"
+
+# Verify the app locally:
+
+Open another EC2 connection to the same machine:
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://0.0.0.0:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://0.0.0.0:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://0.0.0.0:5000/car_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+
+import requests
+
+url = 'http://0.0.0.0:5000/car_price_predict'
+
+r = requests.post(url, json = {
+    "symboling": 2,
+    "normalized-losses": 164,
+    "wheel-base": 99.8,
+    "make": "audi",
+    "fuel-type": "gas",
+    "aspiration": "std",
+    "num-of-doors": "four",
+    "body-style": "sedan",
+    "drive-wheels": "fwd",
+    "engine-location": "front",
+    "length": 176.60,
+    "width": 66.20,
+    "height": 54.30,
+    "curb-weight": 2337,
+    "engine-type": "ohc",
+    "num-of-cylinders": "four",
+    "engine-size": 109, 
+    "fuel-system": "mpfi",
+    "bore": 3.19,
+    "stroke": 3.40,
+    "compression-ratio": 10,
+    "horsepower": 102,
+    "peak-rpm": 5500,
+    "city-mpg": 24,
+    "highway-mpg": 30
+})
+
+print(r.text)
+
+===
+
+# Containerization of our app. We will now see if we are able to run our app inside a Amazon Linux EC2 container that is created inside the Amazon Linux EC2 instance:
+
+Provision an Amazon Linux EC2 instance if you have terminated the above instance:
+
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images/car_price/ . --recursive
+
+sudo yum install docker
+
+sudo systemctl start docker
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker pull public.ecr.aws/amazonlinux/amazonlinux:latest
+
+sudo docker run -it public.ecr.aws/amazonlinux/amazonlinux /bin/bash
+
+Now you are inside a AmazonLinux container.
+
+Go back to a new EC2 instance connection, outside the container:
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker inspect 3e161250c39e (3e161250c39e is the container id. Note down the IP address of the container - 172.17.0.2 in my case)
+
+sudo docker cp car_price_rf_model.pkl 3e161250c39e:car_price_rf_model.pkl
+
+sudo docker cp handler_car_price.py 3e161250c39e:handler_car_price.py
+
+Go to the AmazonLinux container connection:
+
+ls -ltr (check if the files are present in the container)
+
+yum -y update
+
+yum install -y python3-pip
+
+pip3 install scikit-learn==0.24.0
+
+pip3 install flask
+
+pip3 install boto3
+
+python3 handler_car_price.py
+
+# Verification of the containerized app
+
+Go back to the EC2 connection outside the container:
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://172.17.0.2:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/car_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/car_price_predict'
+
+r = requests.post(url, json = {
+    "symboling": 2,
+    "normalized-losses": 164,
+    "wheel-base": 99.8,
+    "make": "audi",
+    "fuel-type": "gas",
+    "aspiration": "std",
+    "num-of-doors": "four",
+    "body-style": "sedan",
+    "drive-wheels": "fwd",
+    "engine-location": "front",
+    "length": 176.60,
+    "width": 66.20,
+    "height": 54.30,
+    "curb-weight": 2337,
+    "engine-type": "ohc",
+    "num-of-cylinders": "four",
+    "engine-size": 109, 
+    "fuel-system": "mpfi",
+    "bore": 3.19,
+    "stroke": 3.40,
+    "compression-ratio": 10,
+    "horsepower": 102,
+    "peak-rpm": 5500,
+    "city-mpg": 24,
+    "highway-mpg": 30
+})
+
+print(r.text)
+
+===
+
+# Now, using the commands used inside the container, in a Dockerfile, we can create a docker image of our application.
+
+Then use the Dockerfile to create docker image and run the image as a container.
+
+sudo docker build -t car_price_predictor_app . (assuming that Dockerfile, py file and pkl file are all available)
+
+sudo docker run car_price_predictor_app 
+
+Verify by executing the below commands in another EC2 connection
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker inspect c828479db929 (c828479db929 is the container id of car price app, to get IP address of container - 172.17.0.2)
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://172.17.0.2:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/car_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/car_price_predict'
+
+r = requests.post(url, json = {
+    "symboling": 2,
+    "normalized-losses": 164,
+    "wheel-base": 99.8,
+    "make": "audi",
+    "fuel-type": "gas",
+    "aspiration": "std",
+    "num-of-doors": "four",
+    "body-style": "sedan",
+    "drive-wheels": "fwd",
+    "engine-location": "front",
+    "length": 176.60,
+    "width": 66.20,
+    "height": 54.30,
+    "curb-weight": 2337,
+    "engine-type": "ohc",
+    "num-of-cylinders": "four",
+    "engine-size": 109, 
+    "fuel-system": "mpfi",
+    "bore": 3.19,
+    "stroke": 3.40,
+    "compression-ratio": 10,
+    "horsepower": 102,
+    "peak-rpm": 5500,
+    "city-mpg": 24,
+    "highway-mpg": 30
+})
+
+print(r.text)
+
+--
+
+# Now you can make your image publicly available:
+
+sudo docker login (provide username and password)
+
+sudo docker tag car_price_predictor_app vinods03/car_price_predictor_app:v5 (Note if you dont use the tag v5, it will be tagged as LATEST)
+
+sudo docker push vinods03/car_price_predictor_app:v5 -> this is where the push to docker hub happens.
+
+In hub.docker.com -> search for vinods03/car_price_predictor_app and you should find it there.
+
+At this point, our car price app has been converted into a docker image and this image is publicly available in docker hub.
+

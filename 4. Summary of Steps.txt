@@ -1,0 +1,11 @@
+1. Find out the best machine learning model for the given dataset / usecase and create a pkl file out of the model
+
+2. Create a python file that accepts given input, transforms the input to the format expected by your model, passes the transformed input to the model and displays the model output back to the user and also make required entries into a DB if needed.
+
+3. Import the python file and pkl file into a machine / server. Install the prerequisistes for the python file to work, if not present already. Execute the python file on the server and verify that the app is giving out the predictions as expected, on 0.0.0.0:5000.
+
+4. Create a base Linux (Amazon, Ubuntu etc) container by pulling the Linux image and running it. Inside the base Linux container, copy the python file, pkl file and install the pre-requisites needed for the python file. Get the IP address of this container and verify that the app is giving out the predictions as expected, on <IP_address_of_container:5000>.
+
+5. Create a Dockerfile out of the python file / pkl file and prerequisites for python file. Build a docker image using the Dockerfilee. Run the docker image as a container. Get the IP address of this new container and verify that the app is giving out the predictions as expected, on <IP_address_of_new_container:5000>.
+
+6. Upload the docker image into a public repo like docker hub or ECR. Use this in the kube manifests to deploy in EKS cluster.

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment 
+metadata:
+  name: car-price-predictor-deployment
+  namespace: dev
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: car-price-predictor-app
+  template:  
+    metadata:
+      labels: 
+        app: car-price-predictor-app
+    spec:
+      containers:
+        - name: car-price-predictor-container
+          image: vinods03/car_price_predictor_app:v6
+          ports: 
+            - containerPort: 5000     
+
+            
+         

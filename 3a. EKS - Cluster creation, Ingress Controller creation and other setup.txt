@@ -1,0 +1,428 @@
+Provision an Amazon Linux EC2 instance.
+
+# Install kubectl
+
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.27.1/2023-04-19/bin/linux/amd64/kubectl
+chmod +x ./kubectl
+mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
+kubectl version --short --client (for verification)
+
+# Install eksctl
+
+ARCH=amd64
+PLATFORM=$(uname -s)_$ARCH
+curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
+sudo mv /tmp/eksctl /usr/local/bin 
+eksctl version (for verification)
+
+# In AWS console, VPC -> remove any previous EKS cluster VPC that might not have been deleted properly
+
+# create cluster
+eksctl create cluster --name=eksdemo1 \
+                      --region=us-east-1 \
+                      --zones=us-east-1a,us-east-1b \
+                      --without-nodegroup 
+
+Note that this command will create a new VPC in the specified region with 1 public subnet and 1 private subnet in each of the 2 zones.
+The cluster will be created in this VPC.
+
+# List clusters in a region
+eksctl get clusters --region=us-east-1
+
+# To enable and use AWS IAM roles for Kubernetes service accounts on our EKS cluster, we must create & associate OIDC identity provider.
+eksctl utils associate-iam-oidc-provider \
+    --region us-east-1 \
+    --cluster eksdemo1 \
+    --approve
+
+# Create Private Node Group   
+eksctl create nodegroup --cluster=eksdemo1 \
+                       --region=us-east-1 \
+                       --name=eksdemo1-ng-private1 \
+                       --node-type=t3.medium \
+                       --nodes=2 \
+                       --nodes-min=2 \
+                       --nodes-max=4 \
+                       --node-volume-size=20 \
+                       --ssh-access \
+                       --ssh-public-key=MyNewAWSKeyPair \
+                       --managed \
+                       --asg-access \
+                       --external-dns-access \
+                       --full-ecr-access \
+                       --appmesh-access \
+                       --alb-ingress-access \
+                       --node-private-networking
+
+# Download IAM Policy
+# Needed only if AWSLoadBalancerControllerIAMPolicy is not created yet
+curl -o iam_policy_latest.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+# Download specific version if needed
+# Needed only if AWSLoadBalancerControllerIAMPolicy is not created yet
+curl -o iam_policy_v2.3.1.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.3.1/docs/install/iam_policy.json
+
+# Create IAM Policy using policy downloaded 
+# Needed only if AWSLoadBalancerControllerIAMPolicy is not created yet
+aws iam create-policy \
+    --policy-name AWSLoadBalancerControllerIAMPolicy \
+    --policy-document file://iam_policy_latest.json
+
+# Go to AWS Console and verify the policy and its permissions
+# Make a note of the policy ARN: arn:aws:iam::100163808729:policy/AWSLoadBalancerControllerIAMPolicy
+
+# Create iam service account in kubernetes cluster using the above policy
+eksctl create iamserviceaccount \
+  --cluster=eksdemo1 \
+  --namespace=kube-system \
+  --name=aws-load-balancer-controller \
+  --region=us-east-1 \
+  --attach-policy-arn=arn:aws:iam::100163808729:policy/AWSLoadBalancerControllerIAMPolicy \
+  --override-existing-serviceaccounts \
+  --approve
+
+# Verify using eksctl and kubectl
+eksctl  get iamserviceaccount --cluster eksdemo1 --region=us-east-1
+kubectl get sa -n kube-system
+kubectl get sa aws-load-balancer-controller -n kube-system
+kubectl describe sa aws-load-balancer-controller -n kube-system
+You can see that newly created policy ARN is added in Annotations confirming that AWS IAM policy with required ALB related access is bound to a Kubernetes service account
+
+# Install helm needed to install the load balancer controller
+curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 > get_helm.sh
+chmod 700 get_helm.sh
+./get_helm.sh
+
+# Verify helm
+helm version --short | cut -d + -f 1
+
+# Add the eks-charts repository.
+helm repo add eks https://aws.github.io/eks-charts
+
+# Update your local repo to make sure that you have the most recent charts.
+helm repo update
+
+# Install the AWS Load Balancer Controller in the kubernetes cluster using the iam serviceaccount created earlier
+# ENSURE TO USE THE VPC ID OF THE EKS CLUSTER here
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=eksdemo1 \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set region=us-east-1 \
+  --set vpcId=vpc-07e4096659a046af9 \
+  --set image.repository=602401143452.dkr.ecr.us-east-1.amazonaws.com/amazon/aws-load-balancer-controller
+
+# If needed to uninstall
+helm uninstall aws-load-balancer-controller -n kube-system
+
+# Verify that the controller & webhook service are installed.
+kubectl get pods -n kube-system
+kubectl get deploy -n kube-system
+kubectl get svc -n kube-system
+Note: Traffic coming to "aws-load-balancer-webhook-service" on port 443 will be sent to port 9443 on "aws-load-balancer-controller" deployment related pods. 
+
+# Create RDS DB in private subnets
+
+If, for local testing, you had created a RDS DB in public subnets, drop the DB. Now, we need the DB in private subnets.
+
+Pre-requisite-1: Create DB Security Group:
+
+Create security group to allow access for RDS Database on port 3306 in the VPC in which the EKS cluster is created.
+
+Security group name: eks_rds_db_sg
+Description: Allow access for RDS Database on Port 3306
+VPC: eksctl-eksdemo1-cluster/VPC
+Inbound Rules
+Type: MySQL/Aurora
+Protocol: TPC
+Port: 3306
+Source: Anywhere (0.0.0.0/0)
+
+Note: Anywhere is not needed. The nodes created in the nodegroup will have 2 security groups associated with them - one with pattern "remoteAccess" and another without this pattern.
+The security group without the pattern "remoteAccess" is what actually needs to be used as the Source in eks_rds_db_sg to ensure strictest possible security. Because the RDS is in private subnet, you anyway can't access from outside VPC (through my desktop MySQL workbench for example), but limiting to the particular security group is best practice. I tried and it works !
+
+Description: Allow access for RDS Database on Port 3306
+Outbound Rules
+Leave to defaults
+
+Pre-requisite-2: Create DB Subnet Group in RDS
+
+As said earlier, the eks create cluster command would have created a VPC and 1 Private subnet, 1 public subnet in each of the 2 AZs in which you chose to create the cluster.
+Note down the Private Subnets in the VPC in which your EKS cluster was created.
+Go to RDS -> Subnet Groups
+Click on Create DB Subnet Group
+Name: eks-rds-db-subnetgroup
+Description: EKS RDS DB Subnet Group
+VPC: eksctl-eksdemo1-cluster/VPC
+Availability Zones: us-east-1a, us-east-1b
+Subnets: Select the Private subnets from both your AZs
+Click on Create
+
+Create RDS Database
+In the Connectivity section, make sure you create in the VPC of the EKS cluster and the subnet group (with private subnets) created above
+VPC: eksctl-eksdemo1-cluster/VPC
+Subnet Group: eks-rds-db-subnetgroup
+Publicly accessible: No
+
+From "my-machine" Amazon Linux Ec2 instance, connect to RDS DB and create the table required for your app.
+
+kubectl run mysql-client --image=mysql:8.0 -it --rm --restart=Never -- /bin/bash
+mysql -h database-1.cy9jvehoizhi.us-east-1.rds.amazonaws.com -uadmin -pTest1234
+
+mysql> show schemas;
+mysql> create database ml_db;
+mysql> show schemas;
+mysql> use ml_db;
+mysql> create table diamond_price_app
+(
+ run_id int,
+ carat decimal(13,6),
+ cut varchar(20),
+ color varchar(20),
+ clarity varchar(20),
+ depth decimal(13,6),
+ tbl decimal(13,6),
+ x decimal(13,6),
+ y decimal(13,6),
+ z decimal(13,6),
+ diamond_price decimal(13,6)
+);
+
+
+# Refer 3b. EKS - Secure domain setup to associate with Load Balancer.txt. 
+# Once a Route 53 domain has been created and associated with SSL certificate, then, here we associate a sub-domain to the load balancer that will be provisioned below.
+# This is mainly useful so that user-friendly / easy-to-remember domain names can be given to our users rather than complex / hard-to-remember load balancer DNS names.
+# Certificates are useful to secure the traffic from and to our app.
+# Also, remember the certificate is tied to the user-friendly domain name and not the DNS of the load balancer.
+
+
+# kube-manifests
+mkdir kube-manifests
+cd kube-manifests
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images-and-ingress-groups/ . --recursive
+cd ..
+kubectl apply -R -f kube-manifests (-R because of the sub-folder structure)
+
+Check all app-related resources are created:
+
+kubectl get svc -n dev
+kubectl get pods -n dev
+kubectl get deploy -n dev
+kubectl get ingress -n dev -> 3 different ingress resources must be listed but all have the same ALB DNS address.
+
+Check in AWS Console, if load balancer and Target group are created.
+Verify: In AWS Console -> Load Balancer -> Listeners and Rules -> verify that, for https:443, certificate is associated.
+We need the application load balancer DNS for the verification of our app.
+
+Note that, in the "Listeners and rules" section of the load balancer, there should be 2 protocols / ports listed now (http:80 and https:443), thanks to the ssl annotations in ingress-resource.yml. Before the addition of the 'redirect' annotation, each of the 2 protocols / ports will be associated with the 3 rules defined in ingress-resource.yml. After the addition of the 'redirect' annotation, there will still be 2 protocols / ports listed but the http:80 protocol / port will have only 1 rule related to redirection to https:443 and https:443 alone will be associated with the 3 rules defined in ingress-resource.yml.
+
+Also, verify that all target groups are healthy.
+Corresponding to the 3 rules, 3 target groups will be created. 
+Each target group has the 2 EKS worker nodes as the targets. 
+Each of our services will be running on all the worker nodes of the EKS cluster. 
+
+If load balancer is not getting created, review logs of AWS LB Controller Pods
+kubectl logs -f aws-load-balancer-controller-7578b74664-ccm79 -n kube-system
+kubectl logs -f aws-load-balancer-controller-7578b74664-sq9hh -n kube-system
+
+I got an error related to VPC/subnet mismatch and then i realised that the vpcs given in the helm install command was incorrect.
+I uninstalled the load balancer controller and installed it again with correct VPC.
+
+
+# Route 53 
+In the hosted zone tekedify.net, create an A record or update A record to map sub-domain name with Load Balancer DNS
+subdomain-name: mlapps.tekedify.net
+alias
+route traffic to: alias to ALB and CLB
+choose region
+provide DNS of the ALB created by the kube manifests above.
+choose routing policy as Simple, for now.
+
+Now use a more user-friendly name as the url instead of the DNS of the load balancer for verification
+
+1st rule:
+
+python3
+
+import requests
+
+url = 'http://mlapps.tekedify.net/diamond_price_predict'
+
+r = requests.post(url, json = {
+    "carat": 0.31,
+    "cut": "Good",
+    "color": "J",
+    "clarity": "SI2",
+    "depth": 63.3,
+    "table": 58.0,
+    "x": 4.34,
+    "y": 4.35,
+    "z": 2.75
+})
+
+print(r)
+
+print(r.text)
+
+Getting error 405 -> Method not allowed, which is as expected.
+
+--
+
+import requests
+
+url = 'https://mlapps.tekedify.net/diamond_price_predict'
+
+r = requests.post(url, json = {
+    "carat": 0.31,
+    "cut": "Good",
+    "color": "J",
+    "clarity": "SI2",
+    "depth": 63.3,
+    "table": 58.0,
+    "x": 4.34,
+    "y": 4.35,
+    "z": 2.75
+})
+
+print(r)
+
+print(r.text)
+
+works as expected.
+
+--
+
+import requests
+
+url = 'http://mlapps.tekedify.net/car_price_predict'
+
+r = requests.post(url, json = {
+    "symboling": 2,
+    "normalized-losses": 164,
+    "wheel-base": 99.8,
+    "make": "audi",
+    "fuel-type": "gas",
+    "aspiration": "std",
+    "num-of-doors": "four",
+    "body-style": "sedan",
+    "drive-wheels": "fwd",
+    "engine-location": "front",
+    "length": 176.60,
+    "width": 66.20,
+    "height": 54.30,
+    "curb-weight": 2337,
+    "engine-type": "ohc",
+    "num-of-cylinders": "four",
+    "engine-size": 109, 
+    "fuel-system": "mpfi",
+    "bore": 3.19,
+    "stroke": 3.40,
+    "compression-ratio": 10,
+    "horsepower": 102,
+    "peak-rpm": 5500,
+    "city-mpg": 24,
+    "highway-mpg": 30
+})
+
+print(r)
+
+print(r.text)
+
+Getting error 405 -> Method not allowed, which is as expected.
+
+--
+
+import requests
+
+url = 'https://mlapps.tekedify.net/car_price_predict'
+
+r = requests.post(url, json = {
+    "symboling": 2,
+    "normalized-losses": 164,
+    "wheel-base": 99.8,
+    "make": "audi",
+    "fuel-type": "gas",
+    "aspiration": "std",
+    "num-of-doors": "four",
+    "body-style": "sedan",
+    "drive-wheels": "fwd",
+    "engine-location": "front",
+    "length": 176.60,
+    "width": 66.20,
+    "height": 54.30,
+    "curb-weight": 2337,
+    "engine-type": "ohc",
+    "num-of-cylinders": "four",
+    "engine-size": 109, 
+    "fuel-system": "mpfi",
+    "bore": 3.19,
+    "stroke": 3.40,
+    "compression-ratio": 10,
+    "horsepower": 102,
+    "peak-rpm": 5500,
+    "city-mpg": 24,
+    "highway-mpg": 30
+})
+
+print(r)
+
+print(r.text)
+
+works as expected.
+
+--
+
+Tried below URLs in incognito chrome browser:
+
+mlapps.tekedify.net
+mlapps.tekedify.net/health_check
+mlapps.tekedify.net/diamond_price_predict/health_check
+
+All of these returned "Health check for diamond price app has completed successfully"
+
+mlapps.tekedify.net/car_price_predict/health_check 
+
+returned "Health check for car price app has completed successfully"
+
+Note that as per our Ingress resource rules: 
+First priority is /diamond_price_predict or /diamond_price_predict/*. 
+Second priority is /car_price_predict or /car_price_predict/*.
+Default priority is tagged to diamond price service.
+Also, in the NodePort service definitions for both diamond price deployment and car price deployment, for the annonation alb.ingress.kubernetes.io/healthcheck-path, we used /diamond_price_predict/health_check and /car_price_predict/health_check
+
+If in handler.py files, we had used incorrect app.route like /car_price/health_check or /diamond_price/health_check instead of /car_price_predict/health_check or /diamond_price_predict/health_check, due to the inconsistency with the annonation alb.ingress.kubernetes.io/healthcheck-path, the targets in our target groups will be unhealthy. 
+Also, mlapps.tekedify.net/car_price/health_check - as defined incorrectly in handler.py - would have returned 404 Not Found error because as per Ingress rules, this traffic would have been routed to diamond price app and this app does not have any method for /car_price/health_check.
+
+Note that, for the chrome browser get requests, you will be automatically redirected to https i.e. secure link.
+
+# If Target groups are unhealthy or for any other issue or as a general checkup, take a look at the pod logs.
+
+kubectl get pods
+
+-- Dump Pod logs
+kubectl logs diamond-price-predictor-deployment-5d6677dc96-fft2d
+
+-- Stream Pod logs
+kubectl logs -f diamond-price-predictor-deployment-5d6677dc96-fft2d
+
+
+# Cleanup 
+
+Delete database
+
+Delete DB security group
+
+Delete DB subnet group
+
+kubectl delete -R -f kube-manifests
+
+# delete Node Group
+eksctl delete nodegroup --cluster=eksdemo1 --name=eksdemo1-ng-private1 --region us-east-1
+
+# Delete Cluster
+eksctl delete cluster eksdemo1 --region us-east-1
+
+Delete my-machine EC2 instance

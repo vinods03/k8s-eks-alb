@@ -1,0 +1,322 @@
+# Install app locally on an EC2 instance
+
+Copied app related files for diamond price app from
+C:\Vinod\AWSSagemaker\Deployment\5. EKS_again\NEW - What was not there in 3 EKS\4-kube-manifests-with-ns-and-limits-and-lb-cicd
+to
+C:\Vinod\AWSSagemaker\Deployment\5. EKS_again\NEW - What was not there in 3 EKS\9-kube-manifests-with-updated-docker-images\app-related\diamond_price
+
+Changed handler.py app.route for health check
+
+Added the exception block for health check
+
+Uploaded the files into S3 s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images/diamond_price/
+
+Go to AWS Console and provision publicly available mysql RDS
+
+Connect through MySQL workbench and execute below:
+
+create database ml_db;
+
+use ml_db;
+
+create table diamond_price_app
+(
+ run_id int,
+ carat decimal(13,6),
+ cut varchar(20),
+ color varchar(20),
+ clarity varchar(20),
+ depth decimal(13,6),
+ tbl decimal(13,6),
+ x decimal(13,6),
+ y decimal(13,6),
+ z decimal(13,6),
+ diamond_price decimal(13,6)
+);
+
+Provision an Amazon Linux EC2 instance.
+
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/kube-manifests-with-updated-docker-images/diamond_price/ . --recursive
+
+sudo yum -y update
+
+sudo yum install -y python3-pip
+
+sudo pip3 install scikit-learn==0.24.0
+
+sudo pip3 install pymysql
+
+sudo pip3 install flask
+
+sudo pip3 install boto3
+
+python3 handler_diamond_price.py
+
+Note:
+
+To find running apps: ps -ef grep py
+
+To kill app:  pkill -9 -f "python3 handler_diamond_price.py"
+
+# Verify the app locally:
+
+Open another EC2 connection to the same machine:
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://0.0.0.0:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://0.0.0.0:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://0.0.0.0:5000/diamond_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+
+import requests
+
+url = 'http://0.0.0.0:5000/diamond_price_predict'
+
+r = requests.post(url, json = {
+    "carat": 0.31,
+    "cut": "Good",
+    "color": "J",
+    "clarity": "SI2",
+    "depth": 63.3,
+    "table": 58.0,
+    "x": 4.34,
+    "y": 4.35,
+    "z": 2.75
+})
+
+print(r.text)
+
+
+# Containerization of our app. We will now see if we are able to run our app inside a Amazon Linux EC2 container that is created inside the Amazon Linux EC2 instance:
+
+Provision an Amazon Linux EC2 instance if you have terminated the above instance:
+
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/for-cicd/handler_diamond_price.py .
+
+aws s3 cp s3://vinod-ml-sagemaker-bucket/diamond_price/for-cicd/diamond_price_dt_model.pkl .
+
+sudo yum install docker
+
+sudo systemctl start docker
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker pull public.ecr.aws/amazonlinux/amazonlinux:latest
+
+sudo docker run -it public.ecr.aws/amazonlinux/amazonlinux /bin/bash
+
+Now you are inside a AmazonLinux container.
+
+Go back to a new EC2 instance connection, outside the container:
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker inspect 73aa9126025c (73aa9126025c is the container id. Note down the IP address of the container - 172.17.0.2 in my case)
+
+sudo docker cp diamond_price_dt_model.pkl 73aa9126025c:diamond_price_dt_model.pkl
+
+sudo docker cp handler_diamond_price.py 73aa9126025c:handler_diamond_price.py
+
+Go to the AmazonLinux container connection:
+
+ls -ltr (check if the files are present in the container)
+
+yum -y update
+
+yum install -y python3-pip
+
+pip3 install scikit-learn==0.24.0
+
+pip3 install pymysql
+
+pip3 install flask
+
+pip3 install boto3
+
+python3 handler_diamond_price.py
+
+# Verification of the containerized app
+
+Go back to the EC2 connection outside the container:
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://172.17.0.2:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/diamond_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.2:5000/diamond_price_predict'
+
+r = requests.post(url, json = {
+    "carat": 0.31,
+    "cut": "Good",
+    "color": "J",
+    "clarity": "SI2",
+    "depth": 63.3,
+    "table": 58.0,
+    "x": 4.34,
+    "y": 4.35,
+    "z": 2.75
+})
+
+print(r.text)
+
+--
+
+# Now, using the commands used inside the container, in a Dockerfile, we can create a docker image of our application.
+
+Then use the Dockerfile to create docker image and run the image as a container.
+
+sudo docker build -t diamond_price_predictor_app . (assuming that Dockerfile, py file and pkl file are all available)
+
+sudo docker run diamond_price_predictor_app 
+
+Verify by executing the below commands in another EC2 connection
+
+sudo docker images
+
+sudo docker ps -a
+
+sudo docker inspect 067a30e2bd87 (067a30e2bd87 is the container id of diamond price app, to get IP address of container - 172.17.0.3)
+
+python3 (Go to python prompt and then execute below code)
+
+import requests
+
+url = 'http://172.17.0.3:5000/'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.3:5000/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.3:5000/diamond_price/health_check'
+
+r = requests.get(url)
+
+print(r)
+
+print(r.text)
+
+--
+
+import requests
+
+url = 'http://172.17.0.3:5000/diamond_price_predict'
+
+r = requests.post(url, json = {
+    "carat": 0.31,
+    "cut": "Good",
+    "color": "J",
+    "clarity": "SI2",
+    "depth": 63.3,
+    "table": 58.0,
+    "x": 4.34,
+    "y": 4.35,
+    "z": 2.75
+})
+
+print(r.text)
+
+--
+
+# Now you can make your image publicly available:
+
+sudo docker login (provide username and password)
+
+sudo docker tag diamond_price_predictor_app vinods03/diamond_price_predictor_app:v5 (Note if you dont use the tag v5, it will be tagged as LATEST)
+
+sudo docker push vinods03/diamond_price_predictor_app:v5 -> this is where the push to docker hub happens.
+
+In hub.docker.com -> search for vinods03/diamond_price_predictor_app and you should find it there.
+
+At this point, our diamond price app has been converted into a docker image and this image is publicly available in docker hub.
+

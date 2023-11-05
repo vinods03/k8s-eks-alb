@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+
+---
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-cpu-mem-limit-range
+  namespace: dev
+spec:
+  limits:
+    - default:
+        memory: "512Mi" # If not specified, the Container's memory limit is set to 512Mi, which is the default memory limit for the namespace. Mi here represents MebiBytes.
+        cpu: "500m"  # 500m means 500 millicores or half a core. If not specified, default limit is 1 vCPU (core) per container 
+      defaultRequest:
+        memory: "256Mi" # If not specified, by default the container will take from whatever is specified in limits.default.memory
+        cpu: "250m" # If not specified, default the container will take from whatever is specified in limits.default.cpu
+      type: Container      
+
+
+# Hard Limit
+# Note that 1 t3.medium instance has 2 vCPUs and 4 GB memory. 
+# So, we have a total of 4 vCPUs (that can go upto 8, as per our nodegroup definition) and 8 GB memory (that can go up to 16 GB).
+
+# LimitRange
+# For each container, we are using a max of 0.5 vCPU (0.25 vCPU ideally) and a max of 512 Mi (256 Mi ideally)
+# 1 GB = ~954 Mebibytes. 
+# We are expecting 3+3 = 6 containers for diamond price app and car price app (replicas = 3 in deployment definitions)
+# Also, we need 6 * 250m = 1500m = 1.5 cores or a max of 6 * 500m = 3000m = 3 cores in the namespace
+# So, we need 6 * 256Mi = 1536Mi = ~1.6GB or a max of 6 * 512Mi = 3072Mi = ~3.2GB in the namespace
+
+# ResourceQuota
+# Remember that, while LimitRange operates at a container level, ResourceQuota operates at namespace level.
+# Set the ResourceQuota values accordingly. The values must be more than LimitRange and less than Hard Limit.
+# cpu >= 3 and cpc <= 4 (can go upto 8)
+# memory >= 3.2 GB and memory <= 8 GB (can go up to 16)
+
+
+---
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ns-resource-quota
+  namespace: dev
+spec:
+  hard:
+    requests.cpu: "5"
+    requests.memory: 5Gi
+    limits.cpu: "5"
+    limits.memory: 5Gi  
+    pods: "8"    
+    configmaps: "5" 
+    persistentvolumeclaims: "5" 
+    replicationcontrollers: "5" 
+    secrets: "5" 
+    services: "5"     

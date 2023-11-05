@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-diamond-price-predictor-service
+  namespace: dev
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: ingress-groups-demo # if we dont give a name, a default name will be used for the ALB
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP 
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-path: /health_check   
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    ## SSL Settings
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:100163808729:certificate/f6b06f21-acf3-48c3-9a18-906ff31c5d49
+    ## Even if user hits http:80, redirect traffic to the secure https:443 automatically
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    ## Ingress groups specific annotations
+    alb.ingress.kubernetes.io/group.name: ml-apps.web
+    alb.ingress.kubernetes.io/group.order: '10'
+spec:
+    rules:
+    - http:
+        paths:
+        - path: /diamond_price_predict
+          pathType: Prefix
+          backend:
+            service:
+                name: diamond-price-predictor-service
+                port:
+                    number: 80        
+             
+                            

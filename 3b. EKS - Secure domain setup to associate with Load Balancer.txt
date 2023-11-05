@@ -1,0 +1,23 @@
+Go to AWS Console -> Route 53 -> Registered domains -> Register domain
+
+Search for a name and choose the name you need. I chose tekedify.net. I did not enable auto-renew after 1 year.
+
+You will be asked to provide contact info.
+
+Go to the "Requests" page and complete the payment.
+
+
+====================
+
+
+Go to AWS Console -> Certificate Manager -> Request Certificate
+
+Provide the domain name for which you need the certificate -> *.tekedify.net (wild-card to make sure all sub-domains also have the certificate associated with them)
+
+This will be in Pending Validation State. You need to "Create Records in Route 53" to complete the DNS validation. 
+
+In Route 53 -> Hosted Zones -> Your domain -> you will see a new CNAME record added.
+
+The CNAME of the Certificate ID in Certificate Manager will be added as a CNAME record in Route 53 -> Hosted Zones of the domain we created.
+
+This is where association between SSL certificate and domain name happens.

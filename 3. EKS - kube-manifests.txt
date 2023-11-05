@@ -1,0 +1,1 @@
+Create the kube-manifests based on the public docker images created in the prior steps
