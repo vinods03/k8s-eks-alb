@@ -1,8 +1,0 @@
-We are organizing the apps / deployments / services in separate folders.
-This is useful when each app can have multiple paths / rules.
-This will also help in developing / maintaining different apps separately by separate teams.
-
-Note that, in each app, the name of the ingress resource file must be different and the name of each ingress resource must also be different.
-But all of these ingress resources belong to the same "Ingress Group" and are tagged to the same Load Balancer.
-
-Also, we are providing a name for the load balancer.
